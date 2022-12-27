@@ -11,10 +11,12 @@ provider "yandex" {
   zone = "ru-central1-b"
 }
 
-data "yandex_dns_zone" "web" {}
+data "yandex_dns_zone" "web" {
+  dns_zone_id = "zone1"
+}
 
 data "yandex_compute_image" "latest_ubuntu_linux" {
-  family   = "ubuntu-*-lts"
+  family   = "ubuntu-2004-lts"
   /*image_id = ["fd8ingbofbh3j5h7i8ll"]*/
 }
 
