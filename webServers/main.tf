@@ -11,25 +11,27 @@ provider "yandex" {
   zone = "ru-central1-b"
 }
 
-data "yandex_availability_zones" "available" {}
-data "yandex_ami" "latest_ubuntu_linux" {
-  image_id    = ["fd8ingbofbh3j5h7i8ll"]
-  most_recent = true
-  filter {
-    name   = "name"
-    values = ["ubuntu-*-lts-*"]
-  }
+data "yandex_dns_zone" "web" {}
+
+data "yandex_compute_image" "latest_ubuntu_linux" {
+  family   = "ubuntu-*-lts"
+  /*image_id = ["fd8ingbofbh3j5h7i8ll"]*/
 }
 
-resource "yandex_vpc_security_group" "web" {
+resource "yandex_vpc_network" "lab-net" {
+  name = "lab-network"
+}
+
+resource "yandex_vpc_default_security_group" "web" {
+  network_id      = "${yandex_vpc_network.lab-net.id}"
   
   dynamic "ingress" {
-    for_each      = ["80", "443", "8080", "22"]
+    for_each         = ["80", "443", "8080", "22"]
     content {
-      from_port   = ingress.values
-      to_port     = ingress.values
-      protocol    = "tcp"
-      cidr_blocks = ["0.0.0.0/0"]
+      from_port      = ingress.value
+      to_port        = ingress.value
+      protocol       = "tcp"
+      v4_cidr_blocks = ["0.0.0.0/0"]
     }
   }
 
@@ -37,23 +39,37 @@ resource "yandex_vpc_security_group" "web" {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    v4_cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "yandex_compute_instance" "default" {
+  name        = "test"
+  platform_id = "standard-v1"
+  zone        = "ru-central1-b"
+
+  resources {
+    cores  = 2
+    memory = 2
   }
 
- }
-
- resource "yandex_launch_configuration" "web" {
-  name            = "WebServer-HA"
-  image_id        = data.yandex_ami.latest_ubuntu_linux.id
-  instance_type   = "t3.micro"
-  security_groups = [yandex_vpc_security_group.id]
-  user_data       = file("user_data.sh")
-
-  lifecycle {
-    create_before_destroy = true
+  boot_disk {
+    initialize_params {
+      image_id = "image_id"
+    }
   }
- }
+  
+  network_interface {
+    subnet_id = "${yandex_vpc_network.lab-net.id}"
+  }
 
+  metadata = {
+    foo      = "bar"
+    ssh-keys = "ubuntu:${file("~/sandbox/terrForYan/key.pub")}"
+  }
+}
+
+/*
   resource "yandex_autoscaling_group" "web" {
     name = "WebServer-ASG"
     launch_configuration = yandex_launch_configuration.web.name
@@ -80,19 +96,35 @@ resource "yandex_vpc_security_group" "web" {
       create_before_destroy = true
     }
   }
-
+*/
   resource "yandex_alb_load_balancer" "web" {
+    network_id         = "${yandex_vpc_network.lab-net.id}"
     name               = "WebServer in ASG"
-    availability_zones = [data.yandex_availability_zones.available.names[0], data.yandex_availability_zones.names[1]]
-    security_groups    = [yandex_vpc_security_group.web.id]
-    
+   //availability_zones = [data.yandex_dns_zone.available.names[0], data.yandex_dns_zone.names[1]]
+    //security_group    = [yandex_vpc_security_group.web.id]
+
+    allocation_policy {
+    location {
+      zone_id   = "ru-central1-b"
+      subnet_id = yandex_vpc_network.lab-net.id 
+      }
+    }      
 
     listener {
-      lb_port           = 80
-      lb_protocol       = "http"
-      instance_port     = 80
-      instance_protocol = "http"
+      name = "my-listener"
+      endpoint {
+        address {
+          external_ipv4_address {}
+        }
+      ports = [ 80 ]
+      }    
+      http {
+        handler {
+          //http_router_id = yandex_alb_http_router.test-router.id
+        }
+      }
     }
+  /*
     health_check {
       healthy_threshold   = 2
       unhealthy_threshold = 2
@@ -100,18 +132,18 @@ resource "yandex_vpc_security_group" "web" {
       target              = "HTTP:80/"
       interval            = 10
     }
-  
+  */
   }
 
   resource "yandex_vpc_network" "default_yc1" {
-    availability_zone = data.yandex_availability_zones.available.names[0]
+    name = "network1"
   }
   resource "yandex_vpc_network" "default_yc2" {
-    availability_zone = data.yandex_availability_zones.names[1]
+    name = "network1"
   }
 
-  output "web_loadbalancer_url" {
-    value = yandex_alb_load_balancer.web.dns_name 
+  output "zone" {
+    value = data.yandex_dns_zone.web.zone
   }
   
 
