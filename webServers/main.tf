@@ -15,7 +15,7 @@ data "yandex_dns_zone" "web" {
   dns_zone_id = "zone1"
 }
 
-data "yandex_compute_image" "latest_ubuntu_linux" {
+data "yandex_compute_image" "ubuntu" {
   family   = "ubuntu-2004-lts"
   /*image_id = ["fd8ingbofbh3j5h7i8ll"]*/
 }
@@ -45,87 +45,91 @@ resource "yandex_vpc_default_security_group" "web" {
   }
 }
 
-resource "yandex_compute_instance" "default" {
-  name        = "test"
-  platform_id = "standard-v1"
-  zone        = "ru-central1-b"
-
-  resources {
-    cores  = 2
-    memory = 2
-  }
-
-  boot_disk {
-    initialize_params {
-      image_id = "image_id"
+resource "yandex_compute_instance_group" "web" {
+  name                = "test-ig"
+  folder_id           = "${data.yandex_resourcemanager_folder.test_folder.id}"
+  service_account_id  = "${yandex_iam_service_account.test_account.id}"
+  deletion_protection = true
+  instance_template {
+    platform_id = "standard-v1"
+    resources {
+      memory = 2
+      cores  = 2
+    }
+    boot_disk {
+      mode = "READ_WRITE"
+      initialize_params {
+        image_id = "${data.yandex_compute_image.ubuntu.id}"
+        size     = 4
+      }
+    }
+    network_interface {
+      network_id = "${yandex_vpc_network.my-inst-group-network.id}"
+      subnet_ids = ["${yandex_vpc_subnet.my-inst-group-subnet.id}"]
+    }
+    labels = {
+      label1 = "label1-value"
+      label2 = "label2-value"
+    }
+    metadata = {
+      foo      = "bar"
+      ssh-keys = "ubuntu:${file("~/.ssh/id_rsa.pub")}"
+    }
+    network_settings {
+      type = "STANDARD"
     }
   }
-  
-  network_interface {
-    subnet_id = "${yandex_vpc_network.lab-net.id}"
+
+  variables = {
+    test_key1 = "test_value1"
+    test_key2 = "test_value2"
   }
 
-  metadata = {
-    foo      = "bar"
-    ssh-keys = "ubuntu:${file("~/sandbox/terrForYan/key.pub")}"
+  scale_policy {
+    fixed_scale {
+      size = 3
+    }
+  }
+
+  allocation_policy {
+    zones = ["ru-central1-a"]
+  }
+
+  deploy_policy {
+    max_unavailable = 2
+    max_creating    = 2
+    max_expansion   = 2
+    max_deleting    = 2
   }
 }
 
-/*
-  resource "yandex_autoscaling_group" "web" {
-    name = "WebServer-ASG"
-    launch_configuration = yandex_launch_configuration.web.name
-    min_size             = 2
-    max_size             = 2
-    min_elb_campacity    = 2
-    health_check_type    = "ELB"
-    vpc_zone_identifier  = [yandex_vpc_network.default_yc1.id, yandex_vpc_network.default_yc2.id]
-    load_balancers       = [yandex_alb_load_balancer.web.name] 
+resource "yandex_alb_load_balancer" "web" {
+  network_id         = "${yandex_vpc_network.lab-net.id}"
+  name               = "WebServer in ASG"
+  //availability_zones = [data.yandex_dns_zone.available.names[0], data.yandex_dns_zone.names[1]]
+  //security_group    = [yandex_vpc_security_group.web.id]
 
-    dynamic "tag" {
-      for_each = {
-        Name   = "WebServer in ASG"
-        Owner  = "Vladimir Makrevich"
-        TAGKEY = "TAGVALUE"
-      }
-      content {
-        key                 = tag.key
-        value               = tag.value
-        propagate_at_launch = true
-      }
+  allocation_policy {
+  location {
+    zone_id   = "ru-central1-b"
+    subnet_id = yandex_vpc_network.lab-net.id 
     }
-    lifecycle {
-      create_before_destroy = true
+  }      
+
+  listener {
+    name = "my-listener"
+    endpoint {
+      address {
+        external_ipv4_address {}
+      }
+      ports = [ 80 ]
+    }    
+    http {
+      handler {
+        //http_router_id = yandex_alb_http_router.test-router.id
+      }
     }
   }
-*/
-  resource "yandex_alb_load_balancer" "web" {
-    network_id         = "${yandex_vpc_network.lab-net.id}"
-    name               = "WebServer in ASG"
-   //availability_zones = [data.yandex_dns_zone.available.names[0], data.yandex_dns_zone.names[1]]
-    //security_group    = [yandex_vpc_security_group.web.id]
-
-    allocation_policy {
-    location {
-      zone_id   = "ru-central1-b"
-      subnet_id = yandex_vpc_network.lab-net.id 
-      }
-    }      
-
-    listener {
-      name = "my-listener"
-      endpoint {
-        address {
-          external_ipv4_address {}
-        }
-      ports = [ 80 ]
-      }    
-      http {
-        handler {
-          //http_router_id = yandex_alb_http_router.test-router.id
-        }
-      }
-    }
   /*
     health_check {
       healthy_threshold   = 2
@@ -135,7 +139,7 @@ resource "yandex_compute_instance" "default" {
       interval            = 10
     }
   */
-  }
+}
 
   resource "yandex_vpc_network" "default_yc1" {
     name = "network1"
